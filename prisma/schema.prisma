@@ -1,0 +1,531 @@
+// FILE PATH: prisma/schema.prisma
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  INSTRUCTOR
+  STUDENT
+}
+
+enum EnrollmentStatus {
+  ACTIVE
+  COMPLETED
+  SUSPENDED
+}
+
+enum ProgressStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  COMPLETED
+}
+
+// ── NEW: Course Approval Status ───────────────────────────────────────────────
+// PENDING  — newly created by instructor, awaiting admin review
+// APPROVED — admin approved; admin can now publish/unpublish
+// REJECTED — admin rejected; instructor sees reason, can revise and resubmit
+enum CourseApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+// ── Auth Models ───────────────────────────────────────────────────────────────
+
+model User {
+  id             String   @id @default(cuid())
+  name           String?
+  email          String   @unique
+  hashedPassword String?
+  role           Role     @default(STUDENT)
+  image          String?
+  googleId       String?  @unique
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  sessions          Session[]
+  accounts          Account[]
+  profile           StudentProfile?
+  enrollments       Enrollment[]
+  certificates      Certificate[]
+  quizAttempts      QuizAttempt[]
+  feedback          CourseFeedback[]
+  discussions       Discussion[]
+  discussionReplies DiscussionReply[]
+  videoProgress     VideoProgress[]
+  platformActivity  PlatformActivity[]
+  adminMessagesFrom AdminMessage[]     @relation("MessageSender")
+  adminMessagesTo   AdminMessage[]     @relation("MessageRecipient")
+
+  @@index([role])
+  @@index([googleId])
+  @@map("users")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+  @@map("accounts")
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
+
+// ── Student Profile ───────────────────────────────────────────────────────────
+
+model StudentProfile {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  phone     String?  @unique
+  bio       String?
+  avatarUrl String?
+  college   String?
+  education String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("student_profiles")
+}
+
+// ── Instructor ────────────────────────────────────────────────────────────────
+
+model Instructor {
+  id             String   @id @default(cuid())
+  name           String
+  email          String   @unique
+  hashedPassword String
+  bio            String?
+  avatarUrl      String?
+  specialization String?
+  googleId       String?  @unique
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  courses Course[]
+
+  @@index([googleId])
+  @@map("instructors")
+}
+
+// ── OAuth Pending Registration ────────────────────────────────────────────────
+
+model OAuthPendingRegistration {
+  id          String   @id @default(cuid())
+  email       String   @unique
+  name        String?
+  googleId    String
+  image       String?
+  bridgeToken String   @unique
+  expires     DateTime
+  createdAt   DateTime @default(now())
+
+  @@index([bridgeToken])
+  @@index([expires])
+  @@map("oauth_pending_registrations")
+}
+
+// ── Course Catalogue ──────────────────────────────────────────────────────────
+
+model Course {
+  id             String              @id @default(cuid())
+  slug           String              @unique
+  title          String
+  description    String
+  thumbnail      String?
+  category       String
+  level          String
+  price          Int                 @default(0)
+  durationMins   Int                 @default(0)
+  // approvalStatus: controlled exclusively by admins.
+  // Instructors create courses as PENDING. Only ADMIN can move to APPROVED or REJECTED.
+  // isPublished can only be set to true when approvalStatus = APPROVED, and only by ADMIN.
+  approvalStatus CourseApprovalStatus @default(PENDING)
+  reviewComment  String?             // Admin feedback shown to instructor on rejection/approval
+  approvedAt     DateTime?
+  rejectedAt     DateTime?
+  isPublished    Boolean             @default(false)
+  isFeatured     Boolean             @default(false)
+  instructorId   String?
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+
+  instructor   Instructor?      @relation(fields: [instructorId], references: [id], onDelete: SetNull)
+  modules      Module[]
+  enrollments  Enrollment[]
+  certificates Certificate[]
+  feedback     CourseFeedback[]
+  discussions  Discussion[]
+
+  @@index([category])
+  @@index([isPublished])
+  @@index([approvalStatus])
+  @@index([instructorId])
+  @@map("courses")
+}
+
+model Module {
+  id                String  @id @default(cuid())
+  courseId          String
+  title             String
+  description       String?
+  videoUrl          String?
+  videoKey          String?
+  videoMimeType     String?
+  videoDurationSecs Int?
+  contentMd         String?
+  durationMins      Int     @default(0)
+  order             Int
+  isFree            Boolean @default(false)
+  isPublished       Boolean @default(false)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  course        Course           @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  progress      ModuleProgress[]
+  quizzes       Quiz[]
+  videoProgress VideoProgress[]
+  discussions   Discussion[]
+
+  @@unique([courseId, order])
+  @@index([courseId])
+  @@map("modules")
+}
+
+// ── Video Progress ─────────────────────────────────────────────────────────────
+
+model VideoProgress {
+  id              String    @id @default(cuid())
+  userId          String
+  moduleId        String
+  watchedSecs     Int       @default(0)
+  totalSecs       Int       @default(0)
+  completed       Boolean   @default(false)
+  completedAt     DateTime?
+  lastHeartbeatAt DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  module Module @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, moduleId])
+  @@index([userId])
+  @@index([moduleId])
+  @@map("video_progress")
+}
+
+// ── Quizzes ───────────────────────────────────────────────────────────────────
+
+model Quiz {
+  id                String   @id @default(cuid())
+  moduleId          String
+  title             String
+  description       String?
+  timeLimit         Int?
+  passingPercentage Float    @default(0)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  module    Module         @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  questions QuizQuestion[]
+  attempts  QuizAttempt[]
+
+  @@index([moduleId])
+  @@map("quizzes")
+}
+
+model QuizQuestion {
+  id            String   @id @default(cuid())
+  quizId        String
+  question      String
+  options       String
+  correctAnswer Int
+  explanation   String?
+  order         Int      @default(0)
+  createdAt     DateTime @default(now())
+
+  quiz    Quiz        @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  answers QuizAnswer[]
+
+  @@index([quizId])
+  @@map("quiz_questions")
+}
+
+model QuizAttempt {
+  id          String   @id @default(cuid())
+  quizId      String
+  userId      String
+  score       Int
+  maxScore    Int
+  percentage  Float
+  passed      Boolean  @default(false)
+  completedAt DateTime @default(now())
+
+  quiz    Quiz        @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  user    User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  answers QuizAnswer[]
+
+  @@index([quizId])
+  @@index([userId])
+  @@index([completedAt])
+  @@map("quiz_attempts")
+}
+
+model QuizAnswer {
+  id             String  @id @default(cuid())
+  attemptId      String
+  questionId     String
+  selectedOption Int
+  isCorrect      Boolean
+
+  attempt  QuizAttempt  @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  question QuizQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@index([attemptId])
+  @@map("quiz_answers")
+}
+
+// ── Enrollments & Progress ────────────────────────────────────────────────────
+
+model Enrollment {
+  id          String           @id @default(cuid())
+  userId      String
+  courseId    String
+  status      EnrollmentStatus @default(ACTIVE)
+  pricePaid   Int              @default(0)
+  enrolledAt  DateTime         @default(now())
+  completedAt DateTime?
+  expiresAt   DateTime?
+
+  user           User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  course         Course           @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  moduleProgress ModuleProgress[]
+
+  @@unique([userId, courseId])
+  @@index([userId])
+  @@index([courseId])
+  @@index([status])
+  @@map("enrollments")
+}
+
+model ModuleProgress {
+  id             String         @id @default(cuid())
+  enrollmentId   String
+  moduleId       String
+  videoCompleted Boolean        @default(false)
+  quizPassed     Boolean        @default(false)
+  status         ProgressStatus @default(NOT_STARTED)
+  watchedSecs    Int            @default(0)
+  startedAt      DateTime?
+  completedAt    DateTime?
+
+  enrollment Enrollment @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+  module     Module     @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+
+  @@unique([enrollmentId, moduleId])
+  @@index([enrollmentId])
+  @@index([moduleId])
+  @@map("module_progress")
+}
+
+// ── Certificates ──────────────────────────────────────────────────────────────
+
+model Certificate {
+  id                String    @id @default(cuid())
+  userId            String
+  courseId          String
+  issuedAt          DateTime  @default(now())
+  verifyToken       String    @unique @default(cuid())
+  overallPercentage Float     @default(0)
+  quizSummary       String    @default("[]")
+  isRevoked         Boolean   @default(false)
+  revokedAt         DateTime?
+  revokedReason     String?
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  course Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, courseId])
+  @@index([verifyToken])
+  @@index([userId, isRevoked])
+  @@map("certificates")
+}
+
+// ── Course Feedback ───────────────────────────────────────────────────────────
+
+model CourseFeedback {
+  id        String    @id @default(cuid())
+  courseId  String
+  userId    String
+  rating    Int
+  comment   String?
+  isHidden  Boolean   @default(false)
+  hiddenAt  DateTime?
+  hiddenBy  String?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  course Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, courseId])
+  @@index([courseId])
+  @@index([userId])
+  @@index([courseId, isHidden])
+  @@map("course_feedback")
+}
+
+// ── Q&A Discussions ───────────────────────────────────────────────────────────
+
+model Discussion {
+  id         String   @id @default(cuid())
+  courseId   String
+  moduleId   String?
+  authorId   String
+  title      String
+  body       String
+  isPinned   Boolean  @default(false)
+  isResolved Boolean  @default(false)
+  replyCount Int      @default(0)
+  isHidden   Boolean  @default(false)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  course  Course            @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  module  Module?           @relation(fields: [moduleId], references: [id], onDelete: SetNull)
+  author  User              @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  replies DiscussionReply[]
+
+  @@index([courseId])
+  @@index([moduleId])
+  @@index([authorId])
+  @@index([courseId, isPinned])
+  @@index([courseId, isResolved])
+  @@map("discussions")
+}
+
+model DiscussionReply {
+  id                String   @id @default(cuid())
+  discussionId      String
+  authorId          String
+  body              String
+  isInstructorReply Boolean  @default(false)
+  isHidden          Boolean  @default(false)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  discussion Discussion @relation(fields: [discussionId], references: [id], onDelete: Cascade)
+  author     User       @relation(fields: [authorId], references: [id], onDelete: Cascade)
+
+  @@index([discussionId])
+  @@index([authorId])
+  @@map("discussion_replies")
+}
+
+// ── OTP Verification ──────────────────────────────────────────────────────────
+
+model OTPVerification {
+  id                String    @id @default(cuid())
+  identifier        String
+  hashedOtp         String
+  expires           DateTime
+  used              Boolean   @default(false)
+  attempts          Int       @default(0)
+  verificationToken String?   @unique
+  verifiedAt        DateTime?
+  createdAt         DateTime  @default(now())
+
+  @@index([identifier])
+  @@index([verificationToken])
+  @@map("otp_verifications")
+}
+
+// ── Platform Activity ─────────────────────────────────────────────────────────
+
+model PlatformActivity {
+  id           String   @id @default(cuid())
+  activityType String
+  actorId      String?
+  actorName    String?
+  actorRole    String?
+  targetId     String?
+  targetType   String?
+  targetTitle  String?
+  metadata     String   @default("{}")
+  createdAt    DateTime @default(now())
+
+  actor User? @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([activityType])
+  @@index([actorId])
+  @@index([createdAt])
+  @@index([targetId])
+  @@map("platform_activity")
+}
+
+// ── Admin Private Messages ────────────────────────────────────────────────────
+
+model AdminMessage {
+  id                String   @id @default(cuid())
+  threadId          String
+  senderId          String
+  recipientId       String
+  senderRole        String
+  body              String
+  isReadByRecipient Boolean  @default(false)
+  isReadByAdmin     Boolean  @default(false)
+  isArchivedByAdmin Boolean  @default(false)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  sender    User @relation("MessageSender",    fields: [senderId],    references: [id], onDelete: Cascade)
+  recipient User @relation("MessageRecipient", fields: [recipientId], references: [id], onDelete: Cascade)
+
+  @@index([threadId])
+  @@index([senderId])
+  @@index([recipientId])
+  @@index([createdAt])
+  @@map("admin_messages")
+}
