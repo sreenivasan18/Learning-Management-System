@@ -150,10 +150,10 @@ graph LR
     Middleware -->|Unauthenticated protected route| SignIn["/auth/signin?callbackUrl=..."]
     Middleware -->|Wrong role| FourOhThree["/403"]
     Middleware -->|Pass| ServerComponent[Server Component / API Route]
-    ServerComponent --> AuthCheck[auth() session check]
-    AuthCheck -->|Authorized| BusinessLogic[Business Logic + Prisma]
+    ServerComponent --> AuthCheck["auth() session check"]
+    AuthCheck -->|Authorized| BusinessLogic["Business Logic + Prisma"]
     BusinessLogic --> Response
-    BusinessLogic --> ActivityLog[logActivity()]
+    BusinessLogic --> ActivityLog["logActivity()"]
 ```
 
 ---
